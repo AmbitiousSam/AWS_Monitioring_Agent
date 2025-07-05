@@ -2,10 +2,16 @@ from typing import List, Dict, Any, Optional
 
 def analyze_alb(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Analyzes a single ALB data point for potential issues."""
+    # Extract short name from ARN for readability
+    try:
+        short_name = item["resource"].split('/')[-2]
+    except IndexError:
+        short_name = item["resource"]
+
     if item.get("http_5xx_errors", 0) > 20:
         return {
             "service": "ALB",
-            "resource": item["resource"],
+            "resource": short_name,
             "issue": "High 5xx Error Count",
             "metric": "HTTP 5xx Errors",
             "value": item["http_5xx_errors"],
@@ -14,7 +20,7 @@ def analyze_alb(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if item.get("avg_latency_ms", 0) > 100:
         return {
             "service": "ALB",
-            "resource": item["resource"],
+            "resource": short_name,
             "issue": "High Target Response Time",
             "metric": "Avg Latency (ms)",
             "value": item["avg_latency_ms"],
@@ -69,12 +75,56 @@ def analyze_elasticache(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
     return None
 
+def analyze_ecs(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Analyzes a single ECS data point for potential issues."""
+    for service in item.get("services", []):
+        if service.get("running_tasks", 0) < service.get("desired_tasks", 0):
+            return {
+                "service": "ECS",
+                "resource": f"{item['resource']}/{service['name']}",
+                "issue": "Service Underprovisioned",
+                "metric": "Running Tasks vs. Desired",
+                "value": f"{service['running_tasks']}/{service['desired_tasks']}",
+                "threshold": "Running < Desired",
+            }
+    return None
+
+def analyze_opensearch(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Analyzes a single OpenSearch data point for potential issues."""
+    if item.get("cluster_status_red", 0) > 0 or item.get("cluster_status_yellow", 0) > 0:
+        status = "Red" if item.get("cluster_status_red", 0) > 0 else "Yellow"
+        return {
+            "service": "OpenSearch",
+            "resource": item["resource"],
+            "issue": f"Cluster in {status} State",
+            "metric": "Cluster Status",
+            "value": status,
+            "threshold": "Not Green",
+        }
+    return None
+
+def analyze_cloudformation(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Analyzes a single CloudFormation data point for potential issues."""
+    failed_states = ["CREATE_FAILED", "ROLLBACK_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"]
+    if item.get("status") in failed_states:
+        return {
+            "service": "CloudFormation",
+            "resource": item["resource"],
+            "issue": "Stack in Failed State",
+            "metric": "Stack Status",
+            "value": item["status"],
+            "threshold": f"not in {failed_states}",
+        }
+    return None
 
 # A map to call the correct analyzer function based on namespace
 ANALYZER_MAP = {
     "alb": analyze_alb,
     "rds": analyze_rds,
     "elasticache": analyze_elasticache,
+    "ecs": analyze_ecs,
+    "opensearch": analyze_opensearch,
+    "cloudformation": analyze_cloudformation,
 }
 
 
