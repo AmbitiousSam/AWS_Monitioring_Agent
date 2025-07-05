@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "aws-diag-agent"
+version = "0.1.0"
+description = "Local-first diagnostic agent for AWS ECS clusters and CloudWatch logs."
+authors = ["Siva Kumar <siva@pp.com>"]
+license = "Apache-2.0"
+readme = "README.md"
+packages = [{ include = "agent" }]
+
+[tool.poetry.scripts]
+aws-diag = "agent.cli:app"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<4.0"
+boto3 = "^1.34"
+typer = {extras = ["all"], version = "^0.12"}   # CLI framework
+rich = "^13.7"                                  # nicer console output
+streamlit = "^1.35"                             # dashboard (later phase)
+click = ">=8.1,<8.2"            # ← add this line (or set click = "8.1.7")
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2"
+pytest-mock = "^3.14"
+moto = "^5.0"           # AWS service mocks
+black = "^24.4"
+isort = "^5.13"
+flake8 = "^7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
