@@ -20,6 +20,7 @@ CONFIG_FILENAMES = ("config.ini", ".aws-diag.ini")
 DEFAULTS = {
     "aws.profile": "",
     "aws.lookback_hours": "3",
+    "aws.temporal_lookback_days": "14",
     "aws.threads": "0",  # 0 = auto
     "ecs.clusters": "*",
     "alb.names": "*",
@@ -56,6 +57,7 @@ class Settings:
     profile: str
     region: str
     lookback_hours: int
+    temporal_lookback_days: int
     threads: int
     log_keywords: List[str]
     rds_instances: List[str]
@@ -128,6 +130,7 @@ class Settings:
             profile=_get("aws.profile").strip(),
             region=_get("aws.region").strip(),
             lookback_hours=int(_get("aws.lookback_hours")),
+            temporal_lookback_days=int(_get("aws.temporal_lookback_days")),
             threads=int(_get("aws.threads")),
             ecs_clusters=[c.strip() for c in clusters_raw.split(",")] if clusters_raw else ["*"],
             alb_names=[n.strip() for n in alb_raw.split(",")] if alb_raw else ["*"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import datetime as dt
 from typing import Any, Dict, List
 
 import ollama
@@ -19,9 +20,7 @@ class Analyzer:
     def run_analysis(
         self,
         current_results: List[Dict[str, Any]],
-        previous_results: List[Dict[str, Any]] = None,
-        current_timestamp: datetime = None,
-        previous_timestamp_str: str = None,
+        current_timestamp: dt.datetime = None,
     ) -> str:
         """Runs the analysis and returns a summary."""
         if not self.settings.llm_provider:
@@ -30,15 +29,11 @@ class Analyzer:
         # Run the pre-analysis to get structured findings from the current data
         static_findings = run_pre_analysis(current_results)
 
-        # Run temporal analysis if previous data is available
-        temporal_findings = []
-        if previous_results and current_timestamp and previous_timestamp_str:
-            temporal_findings = temporal_analyzer.compare_runs(
-                current_results,
-                previous_results,
-                current_timestamp,
-                previous_timestamp_str,
-            )
+        # Run temporal analysis. Historical data is now embedded in the results.
+        temporal_findings = temporal_analyzer.analyze(
+            current_results,
+            self.settings,
+        )
 
         all_findings = static_findings + temporal_findings
 
@@ -68,27 +63,30 @@ class Analyzer:
 
         **CRITICAL INSTRUCTIONS:**
         1.  **Use the EXACT following Markdown structure**:
-            -   `### Key Observations`: A brief, high-level summary of the issues and trends.
-            -   `### Potential Issues & Trends`: A bulleted list summarizing each finding. Clearly distinguish between static issues (e.g., 'High CPU') and temporal trends (e.g., 'Spike in 5xx Errors').
+            -   `### Key Observations`: A brief, high-level summary of the most critical issues and trends.
+            -   `### Potential Issues & Trends`: A bulleted list summarizing each finding.
             -   `### Recommendations`: A bulleted list of actionable recommendations.
-        2.  **Do not just repeat the data**. Interpret it. Explain *why* it's a problem. For trends, emphasize the change over time.
-        3.  **Be specific**. Refer to the resource names from the findings.
+        2.  **MANDATORY: Use Verbatim Explanations**: For each finding, you MUST use the provided `explanation` field from the JSON data as the main description. This is not a suggestion. You are required to use the text from the `explanation` field without any modification.
+        3.  **Handle Data Quality Notices**: If a `data_quality_notice` field is present and not empty, you MUST append its content to the end of the explanation.
+        4.  **Incorporate Confidence**: Append the `confidence` score in parentheses at the end of the finding's title, like `(Confidence: 90%)`.
+        5.  **Be Specific**: Refer to the resource names (`resource_id`) from the findings.
+        6.  **Do Not Interpret**: Do not add your own interpretation or summary of the findings. Your only job is to format the provided data into the specified Markdown structure.
 
         **Example Output:**
 
         ### Key Observations
 
-        The environment is showing signs of stress on the main load balancer, which has seen a dramatic spike in errors. Additionally, one of the ElastiCache clusters continues to be used inefficiently.
+        The environment is showing signs of stress on the main load balancer, which has seen a dramatic spike in errors. Additionally, one of the ElastiCache clusters continues to be used inefficiently, with a high number of evictions.
 
         ### Potential Issues & Trends
 
-        -   **Trend: Spike in 5xx Errors on `pp-production-lb`**: This load balancer's errors jumped from 5 to 150 in the last 3 hours, indicating a severe and recent degradation in the backend services.
-        -   **Issue: Low Cache Hit Rate on `pp-api-production-redis-001`**: This cache's hit rate remains low at 45%, causing unnecessary load on the database.
+        -   **Trend: Spike in 5xx Errors on `pp-production-lb` (Confidence: 90%)**: The metric 'ALB 5xx Errors' increased significantly to 150.00 over the last 1.0 hours, which is 3.1 standard deviations from the historical average of 10.00.
+        -   **Issue: High Eviction Count on `pp-api-production` (Confidence: 85%)**: There have been 1,500 evictions, indicating the cache may be too small for the workload. This can lead to increased latency and database load.
 
         ### Recommendations
 
         -   **Immediately investigate application logs** for services behind `pp-production-lb` to identify the source of the recent 5xx error spike.
-        -   **Review the caching logic** for the `pp-api-production` service to improve the cache hit rate.
+        -   **Review the caching logic and consider resizing** the `pp-api-production` cluster to reduce evictions.
 
         **Findings to Summarize:**
         ```json

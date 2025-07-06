@@ -28,6 +28,35 @@ class ALBCollector(BaseCollector):
         datapoints = response.get("Datapoints", [])
         return sum(d["Sum"] for d in datapoints)
 
+    def _get_metric_history(
+        self, cw, metric_name: str, dimensions: List[Dict[str, str]], stat: str
+    ) -> List[float]:
+        """Helper to get a time series of a metric for temporal analysis."""
+        now = dt.datetime.utcnow()
+        since = now - dt.timedelta(days=self.settings.temporal_lookback_days)
+
+        response = cw.get_metric_data(
+            MetricDataQueries=[
+                {
+                    "Id": "m1",
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/ApplicationELB",
+                            "MetricName": metric_name,
+                            "Dimensions": dimensions,
+                        },
+                        "Period": 86400,  # Daily resolution
+                        "Stat": stat,
+                    },
+                    "ReturnData": True,
+                },
+            ],
+            StartTime=since,
+            EndTime=now,
+            ScanBy="TimestampAscending",
+        )
+        return response["MetricDataResults"][0]["Values"]
+
     def _get_metric_avg(
         self, cw, metric_name: str, dimensions: List[Dict[str, str]], since: dt.datetime, now: dt.datetime
     ) -> float:
@@ -68,10 +97,18 @@ class ALBCollector(BaseCollector):
         alb_dimension_value = "/".join(alb_arn.split("/")[1:])
         alb_dimensions = [{"Name": "LoadBalancer", "Value": alb_dimension_value}]
 
-        # Get ALB-level metrics
+        # Get ALB-level metrics for the current period
         http_5xx = self._get_metric_sum(cw, "HTTPCode_Target_5XX_Count", alb_dimensions, since, now)
         request_count = self._get_metric_sum(cw, "RequestCount", alb_dimensions, since, now)
         latency = self._get_metric_avg(cw, "TargetResponseTime", alb_dimensions, since, now)
+
+        # Get historical metrics for temporal analysis
+        http_5xx_history = self._get_metric_history(
+            cw, "HTTPCode_Target_5XX_Count", alb_dimensions, "Sum"
+        )
+        latency_history = self._get_metric_history(
+            cw, "TargetResponseTime", alb_dimensions, "Average"
+        )
 
         # Get Target Group metrics
         target_groups = elbv2.describe_target_groups(LoadBalancerArn=alb_arn)["TargetGroups"]
@@ -98,8 +135,10 @@ class ALBCollector(BaseCollector):
             "namespace": self.namespace,
             "resource": alb_arn,
             "http_5xx_errors": http_5xx,
+            "http_5xx_errors_history": http_5xx_history,
             "request_count": request_count,
             "avg_latency_ms": round(latency * 1000, 2),  # convert to ms
+            "avg_latency_ms_history": [round(v * 1000, 2) for v in latency_history],
             "unhealthy_host_count": total_unhealthy_hosts,
             "target_groups": target_group_details,
             "collected_at": now.strftime(ISO),

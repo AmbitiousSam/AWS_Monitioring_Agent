@@ -17,6 +17,7 @@ This agent uses a hybrid AI approach, combining rule-based pre-analysis with loc
 - **Hybrid AI Analysis:**
   - **Rule-Based Pre-analyzer:** Deterministically checks for common issues like high error rates, resource saturation, misconfigurations, and performance degradation.
   - **LLM-Powered Summarization:** Uses a local LLM (e.g., Ollama with Llama 3) to generate a human-readable executive summary from the pre-analyzer's findings.
+- **Temporal Trend Analysis:** Automatically fetches historical metric data from CloudWatch to perform trend and anomaly detection from the first run. No local history files required.
 - **Extensible:** Easily add new collectors and analysis rules.
 - **Secure:** Keeps all data, including metrics and analysis, local. No data is sent to third-party APIs.
 - **Flexible Reporting:** Generates both detailed JSON and clean Markdown reports.
@@ -67,8 +68,11 @@ profile = default
 # The AWS region to target.
 region = us-east-2
 
-# How many hours back to look for metrics.
+# How many hours back to look for recent metrics.
 lookback_hours = 3
+
+# How many days back to fetch historical data for temporal analysis.
+temporal_lookback_days = 14
 
 # Number of threads for concurrent data collection. 0 means auto-detect.
 threads = 0

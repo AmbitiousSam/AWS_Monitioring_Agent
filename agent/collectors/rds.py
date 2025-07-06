@@ -67,33 +67,99 @@ class RDSCollector(BaseCollector):
         except Exception as e:
             return {"status": "error", "reason": str(e)}
 
+    def _get_metric_history(
+        self, cw, metric_name: str, resource_id: str, stat: str
+    ) -> List[float]:
+        """Helper to get a time series of a metric for temporal analysis."""
+        now = dt.datetime.utcnow()
+        since = now - dt.timedelta(days=self.settings.temporal_lookback_days)
+
+        response = cw.get_metric_data(
+            MetricDataQueries=[
+                {
+                    "Id": "m1",
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/RDS",
+                            "MetricName": metric_name,
+                            "Dimensions": [{
+                                "Name": "DBInstanceIdentifier", 
+                                "Value": resource_id
+                            }],
+                        },
+                        "Period": 86400,  # Daily resolution
+                        "Stat": stat,
+                    },
+                    "ReturnData": True,
+                },
+            ],
+            StartTime=since,
+            EndTime=now,
+            ScanBy="TimestampAscending",
+        )
+        return [round(v, 2) for v in response["MetricDataResults"][0]["Values"]]
+
     def collect(self, resource_id: str) -> Dict[str, Any]:
         """Collect metrics for a single RDS instance."""
         cw = self._boto("cloudwatch")
         now = dt.datetime.utcnow()
         since = now - dt.timedelta(hours=self.settings.lookback_hours)
 
-        def _get_metric(metric_name):
-            stats = cw.get_metric_statistics(
-                Namespace="AWS/RDS",
-                MetricName=metric_name,
-                Dimensions=[{"Name": "DBInstanceIdentifier", "Value": resource_id}],
-                StartTime=since,
-                EndTime=now,
-                Period=3600,
-                Statistics=["Average"],
+        # Define metrics to fetch for the current period
+        metric_definitions = {
+            "CPUUtilization": "Average",
+            "FreeableMemory": "Average",
+            "DatabaseConnections": "Average",
+        }
+
+        metric_data_queries = [
+            {
+                "Id": f"m{i}",
+                "MetricStat": {
+                    "Metric": {
+                        "Namespace": "AWS/RDS",
+                        "MetricName": metric_name,
+                        "Dimensions": [{
+                            "Name": "DBInstanceIdentifier", 
+                            "Value": resource_id
+                        }],
+                    },
+                    "Period": self.settings.lookback_hours * 3600,
+                    "Stat": stat,
+                },
+                "ReturnData": True,
+            }
+            for i, (metric_name, stat) in enumerate(metric_definitions.items())
+        ]
+
+        current_metrics = {}
+        if metric_data_queries:
+            response = cw.get_metric_data(
+                MetricDataQueries=metric_data_queries, StartTime=since, EndTime=now
             )
-            points = stats.get("Datapoints", [])
-            return round(points[0]["Average"], 2) if points else 0.0
+            for result in response["MetricDataResults"]:
+                metric_name = next(
+                    q["MetricStat"]["Metric"]["MetricName"]
+                    for q in metric_data_queries
+                    if q["Id"] == result["Id"]
+                )
+                value = result["Values"][0] if result.get("Values") else 0.0
+                current_metrics[metric_name] = round(value, 2)
+
+        # Fetch historical metrics for temporal analysis
+        cpu_history = self._get_metric_history(
+            cw, "CPUUtilization", resource_id, "Average"
+        )
 
         pi_data = self._get_performance_insights(resource_id, since, now)
 
         return {
             "namespace": self.namespace,
             "resource": resource_id,
-            "cpu_utilization": _get_metric("CPUUtilization"),
-            "freeable_memory": _get_metric("FreeableMemory"),
-            "db_connections": _get_metric("DatabaseConnections"),
+            "cpu_utilization": current_metrics.get("CPUUtilization", 0.0),
+            "cpu_utilization_history": cpu_history,
+            "freeable_memory": current_metrics.get("FreeableMemory", 0.0),
+            "db_connections": current_metrics.get("DatabaseConnections", 0.0),
             "performance_insights": pi_data,
             "collected_at": now.isoformat(),
         }

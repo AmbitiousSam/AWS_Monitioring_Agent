@@ -41,30 +41,12 @@ def run_collection(settings, reports_dir: Path) -> Path:
             except Exception as e:
                 print(f"A collector failed: {e}")
 
-    # Find previous run data for temporal analysis
-    previous_results = []
-    previous_run_timestamp_str = None
-    try:
-        # Get all previous JSON reports, sort them to find the latest one
-        json_reports = sorted(reports_dir.glob("run-*.json"), reverse=True)
-        if json_reports:
-            previous_report_path = json_reports[0]
-            with open(previous_report_path, "r") as f:
-                previous_run_data = json.load(f)
-                previous_results = previous_run_data.get("results", [])
-                previous_run_timestamp_str = previous_run_data.get("finished")
-                print(f"Loaded {len(previous_results)} results from previous run for temporal analysis.")
-    except (IndexError, FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Could not load previous run data for temporal analysis: {e}")
-        previous_results = []
-
     # Run analysis
+    # Historical data is now embedded in the results from collectors.
     analyzer = Analyzer(settings)
     summary = analyzer.run_analysis(
         current_results=results,
-        previous_results=previous_results,
         current_timestamp=start,
-        previous_timestamp_str=previous_run_timestamp_str,
     )
 
     run_payload = {
@@ -79,3 +61,35 @@ def run_collection(settings, reports_dir: Path) -> Path:
     write_markdown(run_payload, reports_dir)
 
     return json_path
+
+
+def run_analysis_on_report(report_path: Path, reports_dir: Path, settings):
+    """
+    Runs only the analysis and reporting steps on an existing JSON report.
+    """
+    # Load the specified report
+    with open(report_path, "r") as f:
+        report_payload = json.load(f)
+
+    current_results = report_payload["results"]
+    start_str = report_payload["started"]
+    start = dt.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+
+
+    # Run analysis
+    # Historical data is embedded in the report's results, so we don't need to load other files.
+    analyzer = Analyzer(settings)
+    summary = analyzer.run_analysis(
+        current_results=current_results,
+        current_timestamp=start,
+    )
+
+    # Update the payload with the new analysis
+    report_payload["analysis_summary"] = summary
+
+    # Generate a new markdown report
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    write_markdown(report_payload, reports_dir)
+
+    print(f"Re-analysis complete. Markdown report updated.")
+
